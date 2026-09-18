@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $# -ne 1 ]]; then
+    echo "Usage: $0 <ssh-host>"
+    exit 1
+fi
+
+# Not inside tmux yet -- start a local tmux session and re-run ourselves
+# inside it, so this can be launched straight from a plain shell instead of
+# requiring tmux to already be running. The window falls back to a plain
+# shell afterwards, same as the remote windows added below.
+if [[ -z "${TMUX:-}" ]]; then
+    SELF="$(readlink -f "$0")"
+    printf -v cmd '%q %q; exec bash' "$SELF" "$1"
+    exec tmux new-session "$cmd"
+fi
+
+HOST="$1"
+
+# Explicitly identify the local tmux session we are currently using.
+LOCAL_SESSION="$(tmux display-message -p '#S')"
+
+# Track host/session pairs we attach to here so tmux-remote-detach-all and
+# tmux-remote-detach-window (installed separately to /usr/bin, see
+# install.sh) can find and detach them remotely later (Alt-d only knows
+# about the local tmux server; it can't see across the ssh connections on
+# its own).
+STATE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/tmux-remote"
+STATE_FILE="$STATE_DIR/$LOCAL_SESSION"
+mkdir -p "$STATE_DIR"
+touch "$STATE_FILE"
+
+# Display the windows created below as a persistent tab bar at the top.
+tmux set-option -t "$LOCAL_SESSION" status on
+tmux set-option -t "$LOCAL_SESSION" status-position top
+tmux bind-key -n M-Left previous-window
+tmux bind-key -n M-Right next-window
+
+echo "Local tmux session: $LOCAL_SESSION"
+echo "Remote host: $HOST"
+
+mapfile -t sessions < <(
+    ssh "$HOST" 'tmux list-sessions -F "#{session_name}"'
+)
+
+for session in "${sessions[@]}"; do
+    echo "Adding: $session"
+
+    # Record this pairing regardless of whether the window already existed,
+    # so the detach-all helper knows to reach it too.
+    printf '%s\t%s\n' "$HOST" "$session" >> "$STATE_FILE"
+
+    # Avoid duplicates.
+    if tmux list-windows -t "$LOCAL_SESSION" -F '#W' |
+        grep -Fxq "$session"; then
+        echo "  already exists"
+        continue
+    fi
+
+    printf -v remote_cmd 'tmux attach-session -t %q' "$session"
+    printf -v cmd 'ssh -t %q %q; exec bash' "$HOST" "$remote_cmd"
+
+    tmux new-window \
+        -t "$LOCAL_SESSION:" \
+        -n "$session" \
+        "$cmd"
+done
+
+sort -u -o "$STATE_FILE" "$STATE_FILE"
+
+echo
+echo "Windows now in LOCAL session:"
+tmux list-windows -t "$LOCAL_SESSION"
