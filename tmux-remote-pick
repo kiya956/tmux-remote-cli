@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Interactive picker for attaching remote tmux sessions. Meant to run inside
+# a tmux popup (see tmux-remote.conf): lists the sessions on this local
+# session's known remote hosts that are not yet open as windows, and hands
+# the chosen ones to tmux-remote-attach. Uses fzf when available (Tab
+# multi-selects), otherwise falls back to a numbered prompt.
+set -uo pipefail
+
+# The popup closes as soon as this exits, so pause to let messages be read.
+die() {
+    echo "$*" >&2
+    read -rsn1 -p "Press any key to close..." </dev/tty
+    exit 1
+}
+
+[[ -n "${TMUX:-}" ]] || die "Run this from inside a local tmux session (start one with tmux-remote)."
+
+LOCAL_SESSION="$(tmux display-message -p '#S')"
+STATE_FILE="${XDG_CACHE_HOME:-$HOME/.cache}/tmux-remote/$LOCAL_SESSION"
+
+mapfile -t hosts < <(awk -F'\t' '{print $1}' "$STATE_FILE" 2>/dev/null | sort -u)
+[[ ${#hosts[@]} -gt 0 ]] || die "No known remote host yet for this session -- run 'tmux-remote <host>' first."
+
+echo "Fetching remote sessions..."
+open_windows="$(tmux list-windows -t "$LOCAL_SESSION" -F '#W')"
+entries=()
+for host in "${hosts[@]}"; do
+    while IFS= read -r session; do
+        [[ -n "$session" ]] || continue
+        grep -Fxq -- "$session" <<< "$open_windows" && continue
+        entries+=("$session"$'\t'"$host")
+    done < <(ssh -o ConnectTimeout=5 "$host" 'tmux list-sessions -F "#{session_name}"' 2>/dev/null)
+done
+
+[[ ${#entries[@]} -gt 0 ]] || die "No unattached remote sessions found on: ${hosts[*]}"
+
+chosen=()
+if command -v fzf >/dev/null 2>&1; then
+    mapfile -t chosen < <(
+        printf '%s\n' "${entries[@]}" |
+            fzf --multi --delimiter=$'\t' --prompt='attach> ' \
+                --header='Enter: attach   Tab: multi-select   Esc: cancel'
+    )
+else
+    for i in "${!entries[@]}"; do
+        IFS=$'\t' read -r session host <<< "${entries[i]}"
+        printf '%2d) %s  (%s)\n' "$((i + 1))" "$session" "$host"
+    done
+    read -rp "Attach which? (numbers, space separated; empty to cancel) " -a picks </dev/tty
+    for n in "${picks[@]}"; do
+        [[ "$n" =~ ^[0-9]+$ && n -ge 1 && n -le ${#entries[@]} ]] && chosen+=("${entries[n - 1]}")
+    done
+fi
+
+for entry in "${chosen[@]}"; do
+    IFS=$'\t' read -r session host <<< "$entry"
+    tmux-remote-attach "$host" "$session"
+done

@@ -15,6 +15,7 @@ fi
 if [[ "$1" == "install" ]]; then
 	sudo cp tmux-remote /usr/bin/
 	sudo cp tmux-remote-attach /usr/bin/
+	sudo cp tmux-remote-pick /usr/bin/
 	sudo cp tmux-remote-detach-all /usr/bin/
 	sudo cp tmux-remote-detach-window /usr/bin/
 
@@ -26,6 +27,7 @@ if [[ "$1" == "install" ]]; then
 elif [[ "$1" == "uninstall" ]]; then
 	sudo rm -f /usr/bin/tmux-remote
 	sudo rm -f /usr/bin/tmux-remote-attach
+	sudo rm -f /usr/bin/tmux-remote-pick
 	sudo rm -f /usr/bin/tmux-remote-detach-all
 	sudo rm -f /usr/bin/tmux-remote-detach-window
 
