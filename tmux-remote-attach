@@ -30,7 +30,11 @@ STATE_FILE="$STATE_DIR/$LOCAL_SESSION"
 mkdir -p "$STATE_DIR"
 
 if [[ -z "$HOST" ]]; then
-    mapfile -t known_hosts < <(awk -F'\t' '{print $1}' "$STATE_FILE" 2>/dev/null | sort -u)
+    # bash 3.2 (shipped by macOS) lacks `mapfile`; read the hosts by hand.
+    known_hosts=()
+    while IFS= read -r known_host; do
+        [[ -n "$known_host" ]] && known_hosts+=("$known_host")
+    done < <(awk -F'\t' '{print $1}' "$STATE_FILE" 2>/dev/null | sort -u)
     case "${#known_hosts[@]}" in
         0)
             echo "No known remote host yet for this session -- run 'tmux-remote <host>' first, or pass one explicitly: $0 <host> <session>" >&2
@@ -52,7 +56,8 @@ if tmux list-windows -t "$LOCAL_SESSION" -F '#W' | grep -Fxq "$SESSION"; then
 fi
 
 printf -v remote_cmd 'tmux attach-session -t %q' "$SESSION"
-printf -v cmd 'ssh -t %q %q; exec bash' "$HOST" "$remote_cmd"
+printf -v launcher 'ssh -t %q %q; exec "${SHELL:-/bin/sh}"' "$HOST" "$remote_cmd"
+printf -v cmd 'exec /bin/bash -c %q' "$launcher"
 
 tmux new-window -t "$LOCAL_SESSION:" -n "$SESSION" "$cmd"
 

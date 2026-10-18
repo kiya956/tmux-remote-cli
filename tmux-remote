@@ -7,13 +7,29 @@ if [[ $# -ne 1 ]]; then
     exit 1
 fi
 
+# Portable stand-in for `readlink -f`, which is GNU-only (macOS only grew
+# it in 12.3 and still ships bash 3.2, so stay within that dialect).
+resolve_path() {
+    local path="$1" dir target
+    while [[ -L "$path" ]]; do
+        dir="$(cd -P "$(dirname "$path")" && pwd)"
+        target="$(readlink "$path")"
+        case "$target" in
+            /*) path="$target" ;;
+            *) path="$dir/$target" ;;
+        esac
+    done
+    printf '%s/%s\n' "$(cd -P "$(dirname "$path")" && pwd)" "$(basename "$path")"
+}
+
 # Not inside tmux yet -- start a local tmux session and re-run ourselves
 # inside it, so this can be launched straight from a plain shell instead of
 # requiring tmux to already be running. The window falls back to a plain
 # shell afterwards, same as the remote windows added below.
 if [[ -z "${TMUX:-}" ]]; then
-    SELF="$(readlink -f "$0")"
-    printf -v cmd '%q %q; exec bash' "$SELF" "$1"
+    SELF="$(resolve_path "$0")"
+    printf -v launcher '%q %q; exec "${SHELL:-/bin/sh}"' "$SELF" "$1"
+    printf -v cmd 'exec /bin/bash -c %q' "$launcher"
     exec tmux new-session "$cmd"
 fi
 
@@ -22,15 +38,17 @@ HOST="$1"
 # Explicitly identify the local tmux session we are currently using.
 LOCAL_SESSION="$(tmux display-message -p '#S')"
 
-# Track host/session pairs we attach to here so tmux-remote-detach-all and
-# tmux-remote-detach-window (installed separately to /usr/bin, see
-# install.sh) can find and detach them remotely later (Alt-d only knows
-# about the local tmux server; it can't see across the ssh connections on
-# its own).
+# Track host/session pairs so the installed detach helpers can find and
+# detach them remotely later (Alt-d only knows about the local tmux server;
+# it can't see across the ssh connections on its own).
 STATE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/tmux-remote"
 STATE_FILE="$STATE_DIR/$LOCAL_SESSION"
 mkdir -p "$STATE_DIR"
 touch "$STATE_FILE"
+
+sort_state_file() {
+    sort -u -o "$STATE_FILE" "$STATE_FILE"
+}
 
 # Display the windows created below as a persistent tab bar at the top.
 tmux set-option -t "$LOCAL_SESSION" status on
@@ -41,11 +59,19 @@ tmux bind-key -n M-Right next-window
 echo "Local tmux session: $LOCAL_SESSION"
 echo "Remote host: $HOST"
 
-mapfile -t sessions < <(
+# bash 3.2 (the version macOS ships) has no `mapfile`, so collect by hand.
+sessions=()
+while IFS= read -r line; do
+    [[ -n "$line" ]] && sessions+=("$line")
+done < <(
     ssh "$HOST" 'tmux list-sessions -F "#{session_name}"'
 )
 
-for session in "${sessions[@]}"; do
+if [[ ${#sessions[@]} -eq 0 ]]; then
+    echo "No remote tmux sessions reported by $HOST"
+fi
+
+for session in ${sessions[@]+"${sessions[@]}"}; do
     echo "Adding: $session"
 
     # Record this pairing regardless of whether the window already existed,
@@ -60,7 +86,8 @@ for session in "${sessions[@]}"; do
     fi
 
     printf -v remote_cmd 'tmux attach-session -t %q' "$session"
-    printf -v cmd 'ssh -t %q %q; exec bash' "$HOST" "$remote_cmd"
+    printf -v launcher 'ssh -t %q %q; exec "${SHELL:-/bin/sh}"' "$HOST" "$remote_cmd"
+    printf -v cmd 'exec /bin/bash -c %q' "$launcher"
 
     tmux new-window \
         -t "$LOCAL_SESSION:" \
@@ -68,7 +95,7 @@ for session in "${sessions[@]}"; do
         "$cmd"
 done
 
-sort -u -o "$STATE_FILE" "$STATE_FILE"
+sort_state_file
 
 echo
 echo "Windows now in LOCAL session:"
