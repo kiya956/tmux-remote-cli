@@ -3,8 +3,12 @@
 # a tmux popup (see tmux-remote.conf): lists the sessions on this local
 # session's known remote hosts that are not yet open as windows, and hands
 # the chosen ones to tmux-remote-attach. Uses fzf when available (Tab
-# multi-selects), otherwise falls back to a numbered prompt.
+# multi-selects), otherwise falls back to a numbered prompt. With --all,
+# skips the picker and attaches every unattached session.
 set -uo pipefail
+
+attach_all=0
+[[ "${1:-}" == "--all" ]] && attach_all=1
 
 # The popup closes as soon as this exits, so pause to let messages be read.
 die() {
@@ -35,7 +39,9 @@ done
 [[ ${#entries[@]} -gt 0 ]] || die "No unattached remote sessions found on: ${hosts[*]}"
 
 chosen=()
-if command -v fzf >/dev/null 2>&1; then
+if [[ $attach_all -eq 1 ]]; then
+    chosen=("${entries[@]}")
+elif command -v fzf >/dev/null 2>&1; then
     mapfile -t chosen < <(
         printf '%s\n' "${entries[@]}" |
             fzf --multi --delimiter=$'\t' --prompt='attach> ' \
