@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Creates a new detached tmux session on the remote host and opens it as a
+# new window (tab) in the current local session via tmux-remote-attach. If
+# <ssh-host> is omitted, it is inferred from this local session's known
+# remote hosts, provided there is exactly one. If [session-name] is omitted,
+# the remote tmux picks one.
+set -uo pipefail
+
+if [[ $# -gt 2 ]]; then
+    echo "Usage: $0 [ssh-host] [session-name]" >&2
+    exit 1
+fi
+
+if [[ -z "${TMUX:-}" ]]; then
+    echo "Run this from inside a local tmux session (start one with tmux-remote)." >&2
+    exit 1
+fi
+
+LOCAL_SESSION="$(tmux display-message -p '#S')"
+STATE_FILE="${XDG_CACHE_HOME:-$HOME/.cache}/tmux-remote/$LOCAL_SESSION"
+
+mapfile -t known_hosts < <(awk -F'\t' '{print $1}' "$STATE_FILE" 2>/dev/null | sort -u)
+
+HOST=""
+NAME=""
+if [[ $# -eq 2 ]]; then
+    HOST="$1"
+    NAME="$2"
+elif [[ $# -eq 1 ]]; then
+    # A single argument is a host if it is a known one, else a session name.
+    if printf '%s\n' "${known_hosts[@]}" | grep -Fxq -- "$1"; then
+        HOST="$1"
+    else
+        NAME="$1"
+    fi
+fi
+
+if [[ -z "$HOST" ]]; then
+    case "${#known_hosts[@]}" in
+        0)
+            echo "No known remote host yet for this session -- run 'tmux-remote <host>' first, or pass one explicitly: $0 <host> [session]" >&2
+            exit 1
+            ;;
+        1)
+            HOST="${known_hosts[0]}"
+            ;;
+        *)
+            echo "Multiple remote hosts known for this session (${known_hosts[*]}) -- pass one explicitly: $0 <host> [session]" >&2
+            exit 1
+            ;;
+    esac
+fi
+
+if [[ -n "$NAME" ]]; then
+    printf -v remote_cmd 'tmux new-session -d -P -F "#{session_name}" -s %q' "$NAME"
+else
+    remote_cmd='tmux new-session -d -P -F "#{session_name}"'
+fi
+
+if ! SESSION="$(ssh -o ConnectTimeout=5 "$HOST" "$remote_cmd")" || [[ -z "$SESSION" ]]; then
+    tmux display-message "tmux-remote-new: failed to create session on $HOST"
+    echo "Failed to create remote session on $HOST" >&2
+    exit 1
+fi
+
+exec tmux-remote-attach "$HOST" "$SESSION"
