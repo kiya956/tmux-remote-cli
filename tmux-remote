@@ -35,6 +35,8 @@ touch "$STATE_FILE"
 # Display the windows created below as a persistent tab bar at the top.
 tmux set-option -t "$LOCAL_SESSION" status on
 tmux set-option -t "$LOCAL_SESSION" status-position top
+# Close the gap in window numbers when a window is closed/detached.
+tmux set-option -t "$LOCAL_SESSION" renumber-windows on
 tmux bind-key -n M-Left previous-window
 tmux bind-key -n M-Right next-window
 
