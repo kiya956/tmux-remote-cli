@@ -33,7 +33,10 @@ mkdir -p "$STATE_DIR"
 touch "$STATE_FILE"
 
 # Display the windows created below as a persistent tab bar at the top.
-tmux set-option -t "$LOCAL_SESSION" status on
+tmux set-option -t "$LOCAL_SESSION" status 2
+# Show prompts/messages (e.g. M-g) on the spare second line so they do not
+# cover the window tabs.
+tmux set-option -t "$LOCAL_SESSION" message-line 1
 tmux set-option -t "$LOCAL_SESSION" status-position top
 # Close the gap in window numbers when a window is closed/detached.
 tmux set-option -t "$LOCAL_SESSION" renumber-windows on
