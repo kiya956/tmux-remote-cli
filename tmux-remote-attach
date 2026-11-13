@@ -51,7 +51,10 @@ if tmux list-windows -t "$LOCAL_SESSION" -F '#W' | grep -Fxq "$SESSION"; then
     exit 0
 fi
 
-printf -v remote_cmd 'tmux attach-session -t %q' "$SESSION"
+# Turn off the remote session's own status bar once attached: the local
+# tab already represents it, and the remote bar's periodic redraw (e.g. its
+# clock) would otherwise be mistaken for new activity on this tab.
+printf -v remote_cmd 'tmux attach-session -t %q \; set-option status off' "$SESSION"
 printf -v cmd 'ssh -t %q %q; exec bash' "$HOST" "$remote_cmd"
 
 tmux new-window -t "$LOCAL_SESSION:" -n "$SESSION" "$cmd"
